@@ -1,5 +1,6 @@
 import numpy as np
 from fg.gaussian import Gaussian
+from .agent import Agent
 
 class GBPMPPI:
     """
@@ -19,10 +20,10 @@ class GBPMPPI:
         self.best_traj = None
         self.trajectories = None
         self.weights = None
-        self.w_target = 1.0
+        self.lambda_ = 1.0
+        self.w_goal = 1.0
         self.w_obs = 5.0
-
- 
+        self.w_agent = 5.0
 
     def sample_trajectories(self, means, covariances):
         """
@@ -59,35 +60,49 @@ class GBPMPPI:
         self.best_traj = np.tensordot(self.weights, self.trajectories, axes=(0, 0))
         return self.best_traj
 
-    def cost_func(self, trajs: np.ndarray) -> np.ndarray:
+    def cost_func(self, trajs: np.ndarray, agent: Agent) -> np.ndarray:
         """
-        Compute trajectory cost for all sampled trajectories.
-
+        각 trajectory별 total cost 계산
         Args:
             trajs (np.ndarray): shape (num_samples, horizon, state_dim)
-
+            agent (Agent): 현재 agent (env와 omap 접근 가능)
         Returns:
-            np.ndarray: total cost per trajectory (shape: (num_samples,))
+            np.ndarray: shape (num_samples,)
         """
-        # positions only (N, T, 2)
-        pos = trajs[:, :, :2]
+        env = agent._env
+        omap = agent._omap
+        target = agent.get_target()[:2, 0]
+        r = agent.r
+        num_samples, horizon, _ = trajs.shape
 
-        # --- target attraction ---
-        target = self.target_mean[:2, 0]  # (2,)
-        diff = pos - target[np.newaxis, np.newaxis, :]
-        c_t = np.linalg.norm(diff, axis=-1)  # (N, T)
+        pos = trajs[:, :, :2]   # (N, T, 2)
+        dist_goal = np.linalg.norm(pos - target[None, None, :], axis=-1)  # (N, T)
+        c_goal = self.w_goal * dist_goal
 
-        # --- obstacle avoidance ---
-        if self.omap is not None:
-            c_o = np.zeros_like(c_t)
-            for k in range(self.num_samples):
-                c_o[k] = np.array([self.omap.cost(p) for p in pos[k]])
+        if omap is not None:
+            c_obs = np.zeros_like(dist_goal)
+            for k in range(num_samples):
+                c_obs[k] = np.array([omap.cost(p) for p in pos[k]])
+            c_obs *= self.w_obs
         else:
-            c_o = np.zeros_like(c_t)
+            c_obs = 0
 
-        # --- total cost ---
-        total_costs = np.sum(self.w_target * c_t + self.w_obs * c_o, axis=1)
+        c_agent = np.zeros_like(dist_goal)
+        if env is not None:
+            for other in env._agents:
+                if other is agent:
+                    continue
+                other_pos = np.array([v.mean[:2, 0] for v in other._vnodes])  # (T, 2)
+                for k in range(num_samples):
+                    # agent trajectory - other trajectory
+                    diff = pos[k] - other_pos[None, :, :]
+                    dist = np.linalg.norm(diff, axis=-1)
+                    # 가까우면 큰 penalty (safe_dist 이하에서 급격히 증가)
+                    safe_dist = r + other.r
+                    penalty = np.exp(-0.5 * (dist / safe_dist)**2)
+                    c_agent[k] += self.w_agent * penalty
+
+        total_costs = np.sum(c_goal + c_obs + c_agent, axis=1)
 
         return total_costs
-
 

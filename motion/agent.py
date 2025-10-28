@@ -124,11 +124,11 @@ class Agent:
         """Perform MPPI to get optimal trajectory based on current beliefs."""
         means = [v.mean for v in self._vnodes]
         covs = [v.belief.cov for v in self._vnodes]
-        trajs = self.mppi.sample_trajectories(means, covs)
-        # 각 trajectory별 cost 계산
-        costs = np.array([self.mppi.cost_func(traj) for traj in trajs])
-        weights = self.mppi.compute_weights(costs)
-        best_traj = self.mppi.integrate_path()
+
+        trajs = self._mppi.sample_trajectories(means, covs)
+        costs = self._mppi.cost_func(trajs, self)
+        weights = self._mppi.compute_weights(costs)
+        best_traj = self._mppi.integrate_path(weights, trajs)
         self.current_traj = best_traj
         return best_traj
 
@@ -271,7 +271,6 @@ class Agent:
         other_dict = self._others.pop(name)
         other_dict['a'].end_com(self._name)
 
-
 class Env:
     def __init__(self) -> None:
         self._agents: List[Agent] = []
@@ -302,6 +301,10 @@ class Env:
                 a.step_com()
             for a in self._agents:
                 a.step_propagate()
+
+        for a in self._agents:
+            best_traj = a.roll_out()   # 각 agent 내부의 MPPI 실행
+            a.current_traj = best_traj
 
     def step_move(self):
         for a in self._agents:

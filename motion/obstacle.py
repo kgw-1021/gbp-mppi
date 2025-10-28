@@ -1,7 +1,6 @@
 from typing import Tuple, List, Dict
 import numpy as np
 
-
 class ObstacleMap:
     def __init__(self) -> None:
         self.objects = {}

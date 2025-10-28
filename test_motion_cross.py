@@ -42,7 +42,7 @@ if __name__ == '__main__':
             if o['type'] == 'circle':
                 pg.draw.circle(surf, (222, 0, 0), (o['centerx']+xoff, o['centery']+yoff), o['radius'], 1)
 
-        env.step_plan(20) # 각 에이전트가 gbp 수렴을 해당 횟수 만큼 수행
+        env.step_plan(5) # 각 에이전트가 gbp 수렴을 해당 횟수 만큼 수행
         for agent in env._agents:
             color = colors[agent]
             state = agent.get_state() # 각 에이전트마다 자신의 경로를 state list로 받아옴
