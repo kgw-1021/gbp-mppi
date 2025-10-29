@@ -144,3 +144,51 @@ class DistFNode(FNode):
             prec[6, 6] = 1
             prec[7, 7] = 1
         self._factor = Gaussian.from_info(self.dims, info, prec)
+
+class MPPIFNode(FNode):
+    def __init__(self, name: str, vnodes: List[VNode], factor: Gaussian = None,
+                 mppi_traj: np.ndarray = None, mppi_precision: float = 5.0) -> None:
+        """
+        MPPI 궤적을 factor로 변환
+        
+        Args:
+            vnodes: 단일 VNode (특정 time step의 state)
+            mppi_traj: MPPI로 얻은 해당 time step의 목표 state [4, 1]
+            mppi_precision: MPPI 궤적을 얼마나 강하게 따를지 (낮을수록 soft)
+        """
+        assert len(vnodes) == 1
+        super().__init__(name, vnodes, factor)
+        self._mppi_traj = mppi_traj
+        self._mppi_precision = mppi_precision
+        
+    def set_mppi_trajectory(self, traj: np.ndarray):
+        """MPPI 궤적 업데이트"""
+        self._mppi_traj = traj
+        
+    def update_factor(self):
+        if self._mppi_traj is None:
+            # MPPI 궤적이 없으면 identity factor
+            self._factor = Gaussian.identity(self.dims)
+            return
+            
+        v = self._vnodes[0].mean  # [4, 1]
+        z = self._mppi_traj  # [4, 1] - MPPI가 제안한 목표 state
+        
+        # target: ||h(x) - z)||^2 -> 0
+        # h(x) = x (identity mapping)
+        h = v
+        jacob = np.identity(4)  # [4, 4]
+        
+        # MPPI 궤적을 따르는 정도 조절
+        # position은 더 강하게, velocity는 더 약하게 따를 수도 있음
+        precision = np.diag([
+            self._mppi_precision,      # x
+            self._mppi_precision,      # y  
+            self._mppi_precision * 0.5,  # vx (속도는 덜 제약)
+            self._mppi_precision * 0.5   # vy
+        ])
+        
+        prec = jacob.T @ precision @ jacob
+        info = jacob.T @ precision @ (jacob @ v + z - h)
+        
+        self._factor = Gaussian.from_info(self.dims, info, prec)

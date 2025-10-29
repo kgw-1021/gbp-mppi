@@ -1,6 +1,6 @@
 import numpy as np
 from fg.gaussian import Gaussian
-from .agent import Agent
+
 
 class GBPMPPI:
     """
@@ -15,12 +15,12 @@ class GBPMPPI:
         Temperature parameter controlling softmin weighting
     """
 
-    def __init__(self, num_samples=128):
+    def __init__(self, num_samples=128, lambda_=1.0):
         self.num_samples = num_samples
         self.best_traj = None
         self.trajectories = None
         self.weights = None
-        self.lambda_ = 1.0
+        self.lambda_ = lambda_
         self.w_goal = 1.0
         self.w_obs = 5.0
         self.w_agent = 5.0
@@ -28,81 +28,162 @@ class GBPMPPI:
     def sample_trajectories(self, means, covariances):
         """
         각 변수 노드(mean, cov)에 대해 Monte Carlo 샘플링을 수행
-        means: [N, dim]
-        covariances: [N, dim, dim]
+        
+        Args:
+            means: List of mean vectors, each can be shape [4,] or [4, 1]
+            covariances: List of covariance matrices, each shape [4, 4]
+        
+        Returns:
+            samples: np.ndarray of shape (num_samples, num_nodes, state_dim)
         """
         num_nodes = len(means)
-        samples = np.zeros((self.num_samples, num_nodes, means[0].shape[0]))
+        
+        # 첫 번째 mean으로부터 state dimension 추출
+        first_mean = np.asarray(means[0]).flatten()
+        state_dim = len(first_mean)
+        
+        samples = np.zeros((self.num_samples, num_nodes, state_dim))
+        
         for i in range(num_nodes):
+            # mean을 1D 배열로 변환 ([4, 1] -> [4,])
+            mean = np.asarray(means[i]).flatten()
+            cov = np.asarray(covariances[i])
+            
+            # covariance가 올바른 shape인지 확인
+            if cov.shape != (state_dim, state_dim):
+                print(f"Warning: cov shape {cov.shape} at node {i}, using identity")
+                cov = np.eye(state_dim)
+            
+            # Sampling
             samples[:, i, :] = np.random.multivariate_normal(
-                mean=means[i],
-                cov=covariances[i],
+                mean=mean,
+                cov=cov,
                 size=self.num_samples
             )
+        
         self.trajectories = samples
         return samples
 
     def compute_weights(self, costs):
         """
-        w_i = exp(-cost_i / lambda)
+        Compute importance weights using softmin
+        w_i = exp(-cost_i / lambda) / sum_j(exp(-cost_j / lambda))
+        
+        Args:
+            costs: np.ndarray of shape (num_samples,)
+        
+        Returns:
+            weights: np.ndarray of shape (num_samples,)
         """
-        weights = np.exp(-costs / self.lambda_)
+        # Numerical stability: subtract min cost
+        min_cost = np.min(costs)
+        weights = np.exp(-(costs - min_cost) / self.lambda_)
+        
+        # Normalize
         weights /= np.sum(weights)
+        
         self.weights = weights
         return weights
 
-    def integrate_path(self):
+    def integrate_path(self, weights=None, trajectories=None):
         """
-        compute weighted trajectory 
+        Compute weighted average trajectory
+        
+        Args:
+            weights: Optional, use stored weights if None
+            trajectories: Optional, use stored trajectories if None
+        
+        Returns:
+            best_traj: List of np.ndarray, each shape [state_dim, 1]
         """
-        if self.trajectories is None or self.weights is None:
+        if weights is None:
+            weights = self.weights
+        if trajectories is None:
+            trajectories = self.trajectories
+            
+        if trajectories is None or weights is None:
             raise ValueError("Trajectories or weights not computed.")
-        self.best_traj = np.tensordot(self.weights, self.trajectories, axes=(0, 0))
+        
+        # Weighted average: (num_samples,) · (num_samples, horizon, state_dim)
+        weighted_traj = np.tensordot(weights, trajectories, axes=(0, 0))
+        # weighted_traj shape: (horizon, state_dim)
+        
+        # Convert to list of [state_dim, 1] arrays for compatibility
+        self.best_traj = [weighted_traj[i:i+1, :].T for i in range(weighted_traj.shape[0])]
+        
         return self.best_traj
 
-    def cost_func(self, trajs: np.ndarray, agent: Agent) -> np.ndarray:
+    def cost_func(self, trajs: np.ndarray, agent) -> np.ndarray:
         """
         각 trajectory별 total cost 계산
+        
         Args:
             trajs (np.ndarray): shape (num_samples, horizon, state_dim)
             agent (Agent): 현재 agent (env와 omap 접근 가능)
+        
         Returns:
             np.ndarray: shape (num_samples,)
         """
         env = agent._env
         omap = agent._omap
-        target = agent.get_target()[:2, 0]
+        target = agent.get_target()[:2, 0]  # [2,]
         r = agent.r
-        num_samples, horizon, _ = trajs.shape
+        num_samples, horizon, state_dim = trajs.shape
 
-        pos = trajs[:, :, :2]   # (N, T, 2)
-        dist_goal = np.linalg.norm(pos - target[None, None, :], axis=-1)  # (N, T)
+        # Position extraction (x, y)
+        pos = trajs[:, :, :2]   # (num_samples, horizon, 2)
+        
+        # 1. Goal cost: distance to target
+        dist_goal = np.linalg.norm(pos - target[None, None, :], axis=-1)  # (num_samples, horizon)
         c_goal = self.w_goal * dist_goal
 
+        # 2. Obstacle cost
         if omap is not None:
             c_obs = np.zeros_like(dist_goal)
             for k in range(num_samples):
-                c_obs[k] = np.array([omap.cost(p) for p in pos[k]])
+                for t in range(horizon):
+                    c_obs[k, t] = omap.cost(pos[k, t])
             c_obs *= self.w_obs
         else:
             c_obs = 0
 
+        # 3. Agent collision cost
         c_agent = np.zeros_like(dist_goal)
         if env is not None:
             for other in env._agents:
                 if other is agent:
                     continue
-                other_pos = np.array([v.mean[:2, 0] for v in other._vnodes])  # (T, 2)
+                
+                # Get other agent's planned trajectory
+                other_states = other.get_state()
+                if other_states[0] is None:
+                    continue
+                
+                # Extract positions from other agent's trajectory
+                other_pos = []
+                for state in other_states:
+                    if state is None:
+                        break
+                    other_pos.append(state[:2])  # x, y
+                
+                if len(other_pos) == 0:
+                    continue
+                
+                other_pos = np.array(other_pos)  # (horizon, 2)
+                
+                # Compute collision cost for each sample
+                safe_dist = r + other.r
                 for k in range(num_samples):
-                    # agent trajectory - other trajectory
-                    diff = pos[k] - other_pos[None, :, :]
-                    dist = np.linalg.norm(diff, axis=-1)
-                    # 가까우면 큰 penalty (safe_dist 이하에서 급격히 증가)
-                    safe_dist = r + other.r
-                    penalty = np.exp(-0.5 * (dist / safe_dist)**2)
-                    c_agent[k] += self.w_agent * penalty
+                    for t in range(min(horizon, len(other_pos))):
+                        # Distance between this trajectory and other's trajectory
+                        dist = np.linalg.norm(pos[k, t] - other_pos[t])
+                        
+                        # Penalty increases as distance decreases
+                        if dist < safe_dist * 2:  # Only penalize when close
+                            penalty = np.exp(-0.5 * (dist / safe_dist)**2)
+                            c_agent[k, t] += self.w_agent * penalty
 
-        total_costs = np.sum(c_goal + c_obs + c_agent, axis=1)
+        # Total cost: sum over time horizon
+        total_costs = np.sum(c_goal + c_obs + c_agent, axis=1)  # (num_samples,)
 
         return total_costs
-

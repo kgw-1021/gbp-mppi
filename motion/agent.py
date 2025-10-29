@@ -293,7 +293,7 @@ class Env:
             agent_ds = agent_ds[:max_num]
         return [a for a, d in agent_ds]
 
-    def step_plan(self, iters = 12):
+    def step_plan(self, iters = 5):
         for a in self._agents:
             a.step_connect()
         for i in range(iters):
