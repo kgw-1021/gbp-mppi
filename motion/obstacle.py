@@ -10,6 +10,17 @@ class ObstacleMap:
         o = {'type': 'circle', 'name': name, 'centerx': centerx, 'centery': centery, 'radius': radius}
         self.objects[name] = o
 
+    def set_rectangle(self, name: str, centerx: float, centery: float, width: float, height: float, theta: float = 0.0):
+        """
+        회전된 사각형 장애물(OBB) 추가
+        
+        Args:
+            theta: 회전 각도 (라디안)
+        """
+        o = {'type': 'rectangle', 'name': name, 'centerx': centerx, 'centery': centery, 
+            'width': width, 'height': height, 'theta': theta}
+        self.objects[name] = o
+
     def get_d_grad(self, x, y) -> Tuple[float, float, float]:
         mindist = np.inf
         mino = None
@@ -56,39 +67,6 @@ class ObstacleMap:
             cost = np.exp(-2 * normalized_dist) * 100
             
             return cost
-    
-    def cost_with_gradient(self, pos: np.ndarray) -> Tuple[float, np.ndarray]:
-        """
-        비용과 그래디언트를 함께 반환 (최적화에 유용)
-        
-        Args:
-            pos: 위치 [x, y]
-        
-        Returns:
-            cost: 장애물 비용
-            gradient: 비용의 그래디언트 [grad_x, grad_y]
-        """
-        if len(pos) < 2:
-            return 0.0, np.zeros(2)
-        
-        x, y = pos[0], pos[1]
-        distance, grad_x, grad_y = self.get_d_grad(x, y)
-        
-        if distance >= self.safe_margin:
-            return 0.0, np.zeros(2)
-        elif distance <= 0:
-            # 장애물 내부: 밖으로 나가는 방향으로 큰 gradient
-            return 1000.0, np.array([-grad_x * 1000, -grad_y * 1000])
-        else:
-            normalized_dist = distance / self.safe_margin
-            cost = np.exp(-2 * normalized_dist) * 100
-            
-            # 비용의 gradient: chain rule 적용
-            # d(cost)/d(pos) = d(cost)/d(distance) * d(distance)/d(pos)
-            dcost_ddist = -200 / self.safe_margin * np.exp(-2 * normalized_dist)
-            gradient = np.array([dcost_ddist * grad_x, dcost_ddist * grad_y])
-            
-            return cost, gradient
     
     def is_collision(self, pos: np.ndarray, radius: float = 0.0) -> bool:
         """

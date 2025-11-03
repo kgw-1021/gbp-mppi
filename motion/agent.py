@@ -129,7 +129,7 @@ class Agent:
         costs = self._mppi.cost_func(trajs, self)
         weights = self._mppi.compute_weights(costs)
         best_traj = self._mppi.integrate_path(weights, trajs)
-        self.current_traj = best_traj
+        
         return best_traj
 
     def get_target(self) -> np.ndarray:
@@ -303,7 +303,7 @@ class Env:
                 a.step_propagate()
 
         for a in self._agents:
-            best_traj = a.roll_out()   # 각 agent 내부의 MPPI 실행
+            best_traj = a.roll_out()  
             a.current_traj = best_traj
 
     def step_move(self):
