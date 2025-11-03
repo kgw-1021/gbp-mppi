@@ -62,7 +62,7 @@ class Agent:
 
         # Create ObstacleFNode
         self._fnodes_obst = [ObstacleFNode(
-            f'fo{i}', [self._vnodes[i]], omap=omap, safe_dist=self.r,
+            f'fo{i}', [self._vnodes[i]], omap=omap, safe_dist=2*self.r,
             z_precision=obstacle_precision
         ) for i in range(1, steps)]
 
@@ -79,7 +79,7 @@ class Agent:
         self._others = {}
 
         # mppi variables
-        self._mppi = GBPMPPI(num_samples=64, lambda_=1.0)
+        self._mppi = GBPMPPI(num_samples=128, lambda_=0.5)
         self.current_traj = None
 
     def __str__(self) -> str:
@@ -225,7 +225,7 @@ class Agent:
 
         vnodes = [RemoteVNode(f'{on}.v{i}', [f'{on}.v{i}.x', f'{on}.v{i}.y', f'{on}.v{i}.vx', f'{on}.v{i}.vy']) for i in range(1, self._steps)]
         fnodes = [DistFNode(
-            f'{on}.f{i}', [vnodes[i-1], self._vnodes[i]], safe_dist=self.r+other.r,
+            f'{on}.f{i}', [vnodes[i-1], self._vnodes[i]], safe_dist=2*(self.r+other.r),
             z_precision=self._distFNode_prec
         ) for i in range(1, self._steps)]
 

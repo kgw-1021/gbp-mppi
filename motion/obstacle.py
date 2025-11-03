@@ -43,21 +43,16 @@ class ObstacleMap:
         else:
             return 0.0
         
-        # 가장 가까운 장애물까지의 거리
         distance, _, _ = self.get_d_grad(x, y)
         
         if distance >= self.safe_margin:
-            # 안전 거리 밖이면 비용 없음
             return 0.0
         elif distance <= 0:
-            # 장애물 내부이면 매우 큰 비용
             return 1000.0
         else:
-            # 안전 거리 내에서는 거리에 반비례하는 비용
-            # distance가 0에 가까울수록 비용 증가
+
             normalized_dist = distance / self.safe_margin  # [0, 1]
             
-            # 지수 함수로 가까울수록 급격히 증가
             cost = np.exp(-2 * normalized_dist) * 100
             
             return cost

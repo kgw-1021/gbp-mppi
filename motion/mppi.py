@@ -19,8 +19,11 @@ class GBPMPPI:
         self.num_samples = num_samples
         self.best_traj = None
         self.trajectories = None
+        self.gbp_weight_alpha = 1.0
+        self.base_weight_beta = 1.0
         self.weights = None
         self.lambda_ = lambda_
+        self.base_variance = 5.0
         self.w_goal = 1.0
         self.w_obs = 5.0
         self.w_agent = 5.0
@@ -43,7 +46,8 @@ class GBPMPPI:
         state_dim = len(first_mean)
         
         samples = np.zeros((self.num_samples, num_nodes, state_dim))
-        
+        base_cov_component = np.eye(state_dim) * self.base_weight_beta * self.base_variance
+
         for i in range(num_nodes):
             # mean을 1D 배열로 변환 ([4, 1] -> [4,])
             mean = np.asarray(means[i]).flatten()
@@ -54,10 +58,13 @@ class GBPMPPI:
                 print(f"Warning: cov shape {cov.shape} at node {i}, using identity")
                 cov = np.eye(state_dim)
             
+            gbp_cov_component = self.gbp_weight_alpha * cov
+            combined_cov = gbp_cov_component + base_cov_component
+
             # Sampling
             samples[:, i, :] = np.random.multivariate_normal(
                 mean=mean,
-                cov=cov,
+                cov=combined_cov,
                 size=self.num_samples
             )
         
@@ -150,38 +157,16 @@ class GBPMPPI:
         # 3. Agent collision cost
         c_agent = np.zeros_like(dist_goal)
         if env is not None:
-            for other in env._agents:
-                if other is agent:
-                    continue
-                
-                # Get other agent's planned trajectory
-                other_states = other.get_state()
-                if other_states[0] is None:
-                    continue
-                
-                # Extract positions from other agent's trajectory
-                other_pos = []
-                for state in other_states:
-                    if state is None:
-                        break
-                    other_pos.append(state[:2])  # x, y
-                
-                if len(other_pos) == 0:
-                    continue
-                
-                other_pos = np.array(other_pos)  # (horizon, 2)
-                
-                # Compute collision cost for each sample
-                safe_dist = r + other.r
+            # Env.find_near()를 통해 주변 agent만 고려
+            near_agents = env.find_near(agent, range=300)
+            for other in near_agents:
+                other_pos = np.array([v.mean[:2, 0] for v in other._vnodes])  # (T, 2)
                 for k in range(num_samples):
-                    for t in range(min(horizon, len(other_pos))):
-                        # Distance between this trajectory and other's trajectory
-                        dist = np.linalg.norm(pos[k, t] - other_pos[t])
-                        
-                        # Penalty increases as distance decreases
-                        if dist < safe_dist * 2:  # Only penalize when close
-                            penalty = np.exp(-0.5 * (dist / safe_dist)**2)
-                            c_agent[k, t] += self.w_agent * penalty
+                    diff = pos[k] - other_pos[None, :, :]
+                    dist = np.linalg.norm(diff, axis=-1)
+                    safe_dist = r + other.r
+                    penalty = np.exp(-0.5 * (dist / safe_dist)**2)
+                    c_agent[k] += self.w_agent * penalty.flatten()
 
         # Total cost: sum over time horizon
         total_costs = np.sum(c_goal + c_obs + c_agent, axis=1)  # (num_samples,)

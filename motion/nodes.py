@@ -50,12 +50,12 @@ class DynaFNode(FNode):
         ])  # [4, 8]
 
         # presicion of observation z (i.e. the target of h) (here is zero)
-        # precision = np.linalg.inv(np.array([
-        #     [dt**3/3, 0, dt**2/2, 0],
-        #     [0, dt**3/3, 0, dt**2/2],
-        #     [dt**2/2, 0, dt, 0],
-        #     [0, dt**2/2, 0, dt]
-        # ])) * self._z_precision  # [4, 4]
+        precision = np.linalg.inv(np.array([
+            [dt**3/3, 0, dt**2/2, 0],
+            [0, dt**3/3, 0, dt**2/2],
+            [dt**2/2, 0, dt, 0],
+            [0, dt**2/2, 0, dt]
+        ]))  # [4, 4]
         precision = np.diag([self._pos_prec, self._pos_prec, self._vel_prec, self._vel_prec])
 
         # NOTE https://arxiv.org/pdf/1910.14139.pdf
