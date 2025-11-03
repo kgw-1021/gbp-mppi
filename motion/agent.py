@@ -4,7 +4,7 @@ from fg.gaussian import Gaussian
 from fg.factor_graph import VNode, FNode, FactorGraph
 
 from .obstacle import ObstacleMap
-from .nodes import DynaFNode, ObstacleFNode, DistFNode, RemoteVNode
+from .nodes import DynaFNode, ObstacleFNode, DistFNode, MPPIFNode, RemoteVNode
 
 from .mppi import GBPMPPI
 
@@ -13,10 +13,8 @@ class Agent:
             self, name: str, state, target = None, steps: int = 8, radius: int = 5, omap: ObstacleMap = None, env: 'Env' = None,
             start_position_precision = 1000,
             start_velocity_precision = 100,
-            target_position_precision = 1,
-            target_velocity_precision = 2,
-            dynamic_postion_precision = 10,
-            dynamic_velocity_precision = 2,
+            target_position_precision = 5,
+            target_velocity_precision = 10,
             obstacle_precision = 50,
             distance_precision = 15,
             dt: float = 0.1
@@ -56,8 +54,7 @@ class Agent:
 
         # Create DynaFNode
         self._fnodes_dyna = [DynaFNode(
-            f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], dt=self._dt,
-            pos_prec=dynamic_postion_precision, vel_prec=dynamic_velocity_precision
+            f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], dt=self._dt
         ) for i in range(steps-1)]
 
         # Create ObstacleFNode
@@ -131,6 +128,30 @@ class Agent:
         best_traj = self._mppi.integrate_path(weights, trajs)
         
         return best_traj
+
+    def generate_MPPI_FNodes(self, agent, best_traj):
+        a = agent
+        if hasattr(a, "_fnodes_mppi"):
+            for fnode in a._fnodes_mppi:
+                a._graph.remove_node(fnode)
+
+        a._fnodes_mppi = []
+
+        for i, vnode in enumerate(a._vnodes):
+            if i >= len(best_traj):
+                break
+
+            fnode_name = f"{a._name}.mppi_f{i}"
+            fnode = MPPIFNode(
+                name=fnode_name,
+                vnodes=[vnode],
+                mppi_traj=best_traj[i].reshape(-1, 1),
+                mppi_precision=a._mppi_precision if hasattr(a, "_mppi_precision") else 5.0
+            )
+
+            a._graph.add_node(fnode)
+            a._graph.connect(vnode, fnode)
+            a._fnodes_mppi.append(fnode)
 
     def get_target(self) -> np.ndarray:
         return self._fnode_end._factor.mean
@@ -305,6 +326,7 @@ class Env:
         for a in self._agents:
             best_traj = a.roll_out()  
             a.current_traj = best_traj
+            a.generate_MPPI_FNodes(a, best_traj)
 
     def step_move(self):
         for a in self._agents:

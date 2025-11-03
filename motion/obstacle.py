@@ -10,13 +10,7 @@ class ObstacleMap:
         o = {'type': 'circle', 'name': name, 'centerx': centerx, 'centery': centery, 'radius': radius}
         self.objects[name] = o
 
-    def set_rectangle(self, name: str, centerx: float, centery: float, width: float, height: float, theta: float = 0.0):
-        """
-        회전된 사각형 장애물(OBB) 추가
-        
-        Args:
-            theta: 회전 각도 (라디안)
-        """
+    def set_rectangle(self, name: str, centerx: float, centery: float, width: float, height: float, theta: float = 0.0):    
         o = {'type': 'rectangle', 'name': name, 'centerx': centerx, 'centery': centery, 
             'width': width, 'height': height, 'theta': theta}
         self.objects[name] = o

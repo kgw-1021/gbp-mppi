@@ -71,7 +71,7 @@ if __name__ == '__main__':
                 if all_reached_in_step:
                     print("\n(출력) 모든 에이전트가 목표 근처 도달 시작")
     
-            time.sleep(0.001) 
+            # time.sleep(0.001) 
             
             step_count += 1
             

@@ -21,12 +21,13 @@ class RemoteVNode(VNode):
 
 class DynaFNode(FNode):
     def __init__(self, name: str, vnodes: List[VNode], factor: Gaussian = None,
-                 dt: float = 0.1, pos_prec: float = 10, vel_prec: float = 2) -> None:
+                 dt: float = 0.1, sigma_acc: float = 1.5, eps_Q: float = 1e-2, eps_prec: float = 1e-6) -> None:
         assert len(vnodes) == 2
         super().__init__(name, vnodes, factor)
         self._dt = dt
-        self._pos_prec= pos_prec
-        self._vel_prec= vel_prec
+        self._sigma_acc = sigma_acc
+        self._eps_Q = eps_Q
+        self._eps_prec = eps_prec
 
     def update_factor(self):
         # NOTE target: ||h(x) - z)||2 -> 0
@@ -50,16 +51,27 @@ class DynaFNode(FNode):
         ])  # [4, 8]
 
         # presicion of observation z (i.e. the target of h) (here is zero)
-        precision = np.linalg.inv(np.array([
-            [dt**3/3, 0, dt**2/2, 0],
-            [0, dt**3/3, 0, dt**2/2],
-            [dt**2/2, 0, dt, 0],
-            [0, dt**2/2, 0, dt]
-        ]))  # [4, 4]
-        precision = np.diag([self._pos_prec, self._pos_prec, self._vel_prec, self._vel_prec])
+        q11 = dt**3 / 3.0
+        q12 = dt**2 / 2.0
+        q22 = dt
+        Q_axis = (self._sigma_acc**2) * np.array([[q11, q12], [q12, q22]])  # 2x2
 
-        # NOTE https://arxiv.org/pdf/1910.14139.pdf
-        prec = jacob.T @ precision @ jacob
+        # build 4x4 observation covariance for [dx, dy, dvx, dvy]
+        Q_obs = np.block([
+            [Q_axis, np.zeros((2,2))],
+            [np.zeros((2,2)), Q_axis]
+        ])  # 4x4
+
+        # numeric stabilization
+        Q_obs += self._eps_Q * np.eye(4)
+        # observation precision
+        precision = np.linalg.inv(Q_obs)
+
+        # joint information
+        prec = jacob.T @ precision @ jacob  # 8x8
+        # final regularization to ensure PD
+        prec += self._eps_prec * np.eye(8)
+
         info = jacob.T @ precision @ (jacob @ v + z - h)
 
         self._factor = Gaussian.from_info(self.dims, info, prec)
@@ -148,21 +160,12 @@ class DistFNode(FNode):
 class MPPIFNode(FNode):
     def __init__(self, name: str, vnodes: List[VNode], factor: Gaussian = None,
                  mppi_traj: np.ndarray = None, mppi_precision: float = 5.0) -> None:
-        """
-        MPPI 궤적을 factor로 변환
-        
-        Args:
-            vnodes: 단일 VNode (특정 time step의 state)
-            mppi_traj: MPPI로 얻은 해당 time step의 목표 state [4, 1]
-            mppi_precision: MPPI 궤적을 얼마나 강하게 따를지 (낮을수록 soft)
-        """
         assert len(vnodes) == 1
         super().__init__(name, vnodes, factor)
         self._mppi_traj = mppi_traj
         self._mppi_precision = mppi_precision
         
     def set_mppi_trajectory(self, traj: np.ndarray):
-        """MPPI 궤적 업데이트"""
         self._mppi_traj = traj
         
     def update_factor(self):
