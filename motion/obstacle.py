@@ -40,15 +40,7 @@ class ObstacleMap:
             return mindist, dx/mag, dy/mag
 
     def cost(self, pos: np.ndarray) -> float:
-        """
-        주어진 위치에서의 장애물 비용 계산
-        
-        Args:
-            pos: 위치 [x, y] 또는 [x, y, vx, vy]
-        
-        Returns:
-            cost: 장애물로부터의 거리 기반 비용
-        """
+
         if len(pos) >= 2:
             x, y = pos[0], pos[1]
         else:
@@ -61,9 +53,7 @@ class ObstacleMap:
         elif distance <= 0:
             return 1000.0
         else:
-
             normalized_dist = distance / self.safe_margin  # [0, 1]
-            
             cost = np.exp(-2 * normalized_dist) * 100
             
             return cost
