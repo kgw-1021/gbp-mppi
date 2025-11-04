@@ -1,17 +1,20 @@
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import numpy as np
 
 from motion.obstacle import ObstacleMap
 
 class Visualizer:
-    def __init__(self, omap: ObstacleMap, agents: list):
+    def __init__(self, omap: ObstacleMap, agents: list, xlim: tuple = (-100, 300), ylim: tuple = (-100, 300)) -> None:
         # Matplotlib 초기화 (실시간 플로팅 모드)
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(10, 10))
+        self.xlim = xlim
+        self.ylim = ylim
         
         # 맵 범위 설정 (PyBullet 카메라 설정과 유사하게)
-        self.ax.set_xlim(-100, 300)
-        self.ax.set_ylim(-100, 300)
+        self.ax.set_xlim(xlim)
+        self.ax.set_ylim(ylim)
         self.ax.set_aspect('equal') # 1:1 비율 (원이 타원으로 보이지 않게)
         self.ax.grid(True)
         
@@ -37,6 +40,8 @@ class Visualizer:
 
     def _create_obstacles(self):
         """장애물을 Matplotlib Patch로 생성"""
+        obstacle_added = False  # 범례 중복 방지용
+        
         for name, obj in self.omap.objects.items():
             if obj['type'] == 'circle':
                 circle = patches.Circle(
@@ -44,9 +49,45 @@ class Visualizer:
                     obj['radius'],
                     color='black',
                     alpha=0.8,
-                    label='Obstacle'
+                    label='Obstacle' if not obstacle_added else None
                 )
                 self.ax.add_patch(circle)
+                obstacle_added = True
+                
+            elif obj['type'] == 'rectangle':
+                # 직사각형 파라미터 추출
+                cx, cy = obj['centerx'], obj['centery']
+                width = obj['width']
+                height = obj['height']
+                theta = obj['theta']  # 회전 각도 (라디안)
+                
+                # Matplotlib의 Rectangle은 왼쪽 아래 모서리 좌표를 기준으로 함
+                # 중심점 기준을 왼쪽 아래로 변환
+                # 회전 변환을 위해 patches.Rectangle + set_transform 사용
+                
+                # 1. 중심 기준 직사각형 생성 (회전 전)
+                rect = patches.Rectangle(
+                    (-width/2, -height/2),  # 로컬 좌표계에서 중심이 (0,0)
+                    width,
+                    height,
+                    color='black',
+                    alpha=0.8,
+                    label='Obstacle' if not obstacle_added else None
+                )
+                
+                # 2. 변환 행렬 생성: 회전 + 이동
+                # Matplotlib transform: Affine2D를 사용
+                from matplotlib.transforms import Affine2D
+                
+                # 회전 각도를 degree로 변환 (theta는 라디안)
+                angle_deg = np.degrees(theta)
+                
+                # 변환: 회전 후 이동
+                t = Affine2D().rotate_around(0, 0, theta).translate(cx, cy) + self.ax.transData
+                rect.set_transform(t)
+                
+                self.ax.add_patch(rect)
+                obstacle_added = True
     
     def _create_agents(self):
         """에이전트 아티스트(Patch, Line)들을 생성"""

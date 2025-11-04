@@ -15,61 +15,71 @@ class GBPMPPI:
         Temperature parameter controlling softmin weighting
     """
 
-    def __init__(self, num_samples=128, lambda_=1.0):
+    def __init__(self, num_samples=128, lambda_=1.0, exploration_ratio=0.9, global_variance_scale=5.0):
         self.num_samples = num_samples
         self.best_traj = None
         self.trajectories = None
-        self.gbp_weight_alpha = 1.0
-        self.base_weight_beta = 1.0
+        self.gbp_weight_alpha = 0.5
+        self.base_weight_beta = 2.0
         self.weights = None
         self.lambda_ = lambda_
-        self.base_variance = 5.0
-        self.w_goal = 1.0
-        self.w_obs = 5.0
-        self.w_agent = 5.0
+        self.base_variance =10.0
+        self.w_goal = 10.0
+        self.w_obs = 50.0
+        self.w_agent = 40.0
+        self.w_smooth_vel = 15
+        self.w_smooth_acc = 10
+        self.trust_threshold = 2
+        self.exploration_ratio = exploration_ratio
+        self.global_variance_scale = global_variance_scale
 
     def sample_trajectories(self, means, covariances):
-        """
-        각 변수 노드(mean, cov)에 대해 Monte Carlo 샘플링을 수행
-        
-        Args:
-            means: List of mean vectors, each can be shape [4,] or [4, 1]
-            covariances: List of covariance matrices, each shape [4, 4]
-        
-        Returns:
-            samples: np.ndarray of shape (num_samples, num_nodes, state_dim)
-        """
         num_nodes = len(means)
-        
-        # 첫 번째 mean으로부터 state dimension 추출
+
         first_mean = np.asarray(means[0]).flatten()
         state_dim = len(first_mean)
-        
+
         samples = np.zeros((self.num_samples, num_nodes, state_dim))
         base_cov_component = np.eye(state_dim) * self.base_weight_beta * self.base_variance
 
+        num_local = int(self.num_samples * self.exploration_ratio)
+        num_global = self.num_samples - num_local
+
         for i in range(num_nodes):
-            # mean을 1D 배열로 변환 ([4, 1] -> [4,])
             mean = np.asarray(means[i]).flatten()
             cov = np.asarray(covariances[i])
             
-            # covariance가 올바른 shape인지 확인
             if cov.shape != (state_dim, state_dim):
                 print(f"Warning: cov shape {cov.shape} at node {i}, using identity")
                 cov = np.eye(state_dim)
-            
+
             gbp_cov_component = self.gbp_weight_alpha * cov
             combined_cov = gbp_cov_component + base_cov_component
 
-            # Sampling
-            samples[:, i, :] = np.random.multivariate_normal(
-                mean=mean,
-                cov=combined_cov,
-                size=self.num_samples
-            )
-        
+            if np.trace(cov) < self.trust_threshold:
+                node_samples = np.tile(mean, (self.num_samples, 1))
+            else:
+                local_samples = np.random.multivariate_normal(
+                    mean=mean,
+                    cov=combined_cov,
+                    size=num_local
+                )
+
+                global_cov = np.eye(state_dim) * self.global_variance_scale * np.trace(combined_cov) / state_dim
+                global_samples = np.random.multivariate_normal(
+                    mean=mean,
+                    cov=global_cov,
+                    size=num_global
+                )
+
+                node_samples = np.vstack([local_samples, global_samples])
+                np.random.shuffle(node_samples)
+
+            samples[:, i, :] = node_samples
+
         self.trajectories = samples
         return samples
+
 
     def compute_weights(self, costs):
         """
@@ -158,7 +168,7 @@ class GBPMPPI:
         c_agent = np.zeros_like(dist_goal)
         if env is not None:
             # Env.find_near()를 통해 주변 agent만 고려
-            near_agents = env.find_near(agent, range=300)
+            near_agents = env.find_near(agent, range=500)
             for other in near_agents:
                 other_pos = np.array([v.mean[:2, 0] for v in other._vnodes])  # (T, 2)
                 for k in range(num_samples):
@@ -168,7 +178,17 @@ class GBPMPPI:
                     penalty = np.exp(-0.5 * (dist / safe_dist)**2)
                     c_agent[k] += self.w_agent * penalty.flatten()
 
-        # Total cost: sum over time horizon
-        total_costs = np.sum(c_goal + c_obs + c_agent, axis=1)  # (num_samples,)
+        vel = np.diff(pos, axis=1)  
+        acc = np.diff(vel, axis=1)  
+        
+        c_smooth_vel = np.linalg.norm(vel, axis=-1)    
+        c_smooth_acc = np.linalg.norm(acc, axis=-1)     
+
+        # 차원 맞춰 합산
+        c_smooth = np.zeros_like(dist_goal)
+        c_smooth[:, 1:] += self.w_smooth_vel * c_smooth_vel
+        c_smooth[:, 2:] += self.w_smooth_acc * c_smooth_acc
+
+        total_costs = np.sum(c_goal + c_obs + c_agent + c_smooth, axis=1)  # (num_samples,)
 
         return total_costs

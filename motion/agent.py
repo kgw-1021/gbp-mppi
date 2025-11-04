@@ -14,10 +14,10 @@ class Agent:
             start_position_precision = 1000,
             start_velocity_precision = 100,
             target_position_precision = 5,
-            target_velocity_precision = 10,
-            obstacle_precision = 50,
-            distance_precision = 15,
-            dt: float = 0.1
+            target_velocity_precision = 5,
+            obstacle_precision = 500,
+            distance_precision = 20,
+            dt: float = 0.05
         ) -> None:
         assert steps > 1
         if np.shape(state) == ():
@@ -76,7 +76,7 @@ class Agent:
         self._others = {}
 
         # mppi variables
-        self._mppi = GBPMPPI(num_samples=128, lambda_=0.5)
+        self._mppi = GBPMPPI(num_samples=256, lambda_=0.3)
         self.current_traj = None
 
     def __str__(self) -> str:
@@ -125,12 +125,14 @@ class Agent:
         trajs = self._mppi.sample_trajectories(means, covs)
         costs = self._mppi.cost_func(trajs, self)
         weights = self._mppi.compute_weights(costs)
-        best_traj = self._mppi.integrate_path(weights, trajs)
+        self.current_traj = self._mppi.integrate_path(weights, trajs)
         
-        return best_traj
+        return self.current_traj
 
     def generate_MPPI_FNodes(self, agent, best_traj):
         a = agent
+
+        # 기존 MPPI factor 제거
         if hasattr(a, "_fnodes_mppi"):
             for fnode in a._fnodes_mppi:
                 a._graph.remove_node(fnode)
@@ -138,15 +140,15 @@ class Agent:
         a._fnodes_mppi = []
 
         for i, vnode in enumerate(a._vnodes):
-            if i >= len(best_traj):
-                break
+            if i == 0 or i >= len(best_traj):
+                continue  
 
             fnode_name = f"{a._name}.mppi_f{i}"
             fnode = MPPIFNode(
                 name=fnode_name,
                 vnodes=[vnode],
                 mppi_traj=best_traj[i].reshape(-1, 1),
-                mppi_precision=a._mppi_precision if hasattr(a, "_mppi_precision") else 5.0
+                mppi_precision=getattr(a, "_mppi_precision", 1.0)
             )
 
             a._graph.add_node(fnode)
@@ -246,7 +248,7 @@ class Agent:
 
         vnodes = [RemoteVNode(f'{on}.v{i}', [f'{on}.v{i}.x', f'{on}.v{i}.y', f'{on}.v{i}.vx', f'{on}.v{i}.vy']) for i in range(1, self._steps)]
         fnodes = [DistFNode(
-            f'{on}.f{i}', [vnodes[i-1], self._vnodes[i]], safe_dist=2*(self.r+other.r),
+            f'{on}.f{i}', [vnodes[i-1], self._vnodes[i]], safe_dist=2.5*(self.r+other.r),
             z_precision=self._distFNode_prec
         ) for i in range(1, self._steps)]
 
@@ -301,7 +303,7 @@ class Env:
             a._env = self
             self._agents.append(a)
 
-    def find_near(self, this: Agent, range: float = 1000, max_num: int = -1) -> List[Agent]:
+    def find_near(self, this: Agent, range: float = 300, max_num: int = -1) -> List[Agent]:
         agent_ds = []
         for a in self._agents:
             if a is this:
@@ -326,7 +328,7 @@ class Env:
         for a in self._agents:
             best_traj = a.roll_out()  
             a.current_traj = best_traj
-            a.generate_MPPI_FNodes(a, best_traj)
+            # a.generate_MPPI_FNodes(a, best_traj)
 
     def step_move(self):
         for a in self._agents:

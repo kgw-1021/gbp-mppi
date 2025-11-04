@@ -21,7 +21,7 @@ class RemoteVNode(VNode):
 
 class DynaFNode(FNode):
     def __init__(self, name: str, vnodes: List[VNode], factor: Gaussian = None,
-                 dt: float = 0.1, sigma_acc: float = 1.5, eps_Q: float = 1e-2, eps_prec: float = 1e-6) -> None:
+                 dt: float = 0.1, sigma_acc: float = 0.15, eps_Q: float = 1e-1, eps_prec: float = 1e-6) -> None:
         assert len(vnodes) == 2
         super().__init__(name, vnodes, factor)
         self._dt = dt
